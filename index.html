@@ -1,0 +1,998 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>天堂M 地龍單挑終極分析儀 (Fixed)</title>
+
+    <!-- 引入 Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <!-- 1. 引入 React 相關依賴 (使用 16.14.0 穩定版 - 用於相容舊版 Recharts) -->
+    <script crossorigin src="https://unpkg.com/react@16.14.0/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@16.14.0/umd/react-dom.production.min.js"></script>
+
+    <!-- 2. 引入 Recharts 依賴 (Prop-types) -->
+    <script src="https://unpkg.com/prop-types@15.7.2/prop-types.min.js"></script>
+
+    <!-- 3. 引入 Recharts (使用 1.8.5 穩定版 - UMD 支援最好) -->
+    <script src="https://unpkg.com/recharts@1.8.5/umd/Recharts.min.js"></script>
+
+    <!-- 4. 引入 Babel 用於解析 JSX -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <style>
+        body {
+            background-color: #0f172a;
+            /* slate-950 */
+            color: #e2e8f0;
+            /* slate-200 */
+            font-family: system-ui, -apple-system, sans-serif;
+        }
+
+        .recharts-wrapper {
+            user-select: none;
+        }
+
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: #1e293b;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: #475569;
+            border-radius: 4px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: #64748b;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useMemo, useEffect, useRef } = React;
+
+        // 從 window 物件安全解構 Recharts 組件
+        const RechartsObj = window.Recharts;
+        if (!RechartsObj) {
+            console.error("Recharts library not found! window.Recharts is undefined.");
+            // Render an error message to the screen
+            const root = document.getElementById('root');
+            if (root) root.innerHTML = '<div style="color: #ef4444; padding: 20px; text-align: center;"><h1>Library Error</h1><p>Recharts failed to load. Please check your internet connection.</p></div>';
+            throw new Error("Recharts not found");
+        }
+
+        const {
+            ScatterChart, Scatter, XAxis, YAxis, CartesianGrid, Tooltip,
+            ResponsiveContainer, ReferenceArea, Legend, Line, ComposedChart, ReferenceLine
+        } = RechartsObj;
+
+        // --- 線性迴歸計算函數 ---
+        const calculateLinearRegression = (data, xKey = 'damage', yKey = 'time') => {
+            if (data.length < 2) return null;
+
+            const n = data.length;
+            let sumX = 0, sumY = 0, sumXY = 0, sumX2 = 0;
+
+            data.forEach(d => {
+                const x = d[xKey];
+                const y = d[yKey];
+                sumX += x;
+                sumY += y;
+                sumXY += x * y;
+                sumX2 += x * x;
+            });
+
+            const denominator = (n * sumX2 - sumX * sumX);
+            if (denominator === 0) return null; // 防止垂直線導致的除以零
+
+            const slope = (n * sumXY - sumX * sumY) / denominator;
+            const intercept = (sumY - slope * sumX) / n;
+
+            // 計算 R² (決定係數)
+            const yMean = sumY / n;
+            let ssTotal = 0, ssResidual = 0;
+            data.forEach(d => {
+                const y = d[yKey];
+                const yPredicted = slope * d[xKey] + intercept;
+                ssTotal += Math.pow(y - yMean, 2);
+                ssResidual += Math.pow(y - yPredicted, 2);
+            });
+
+            // 如果 ssTotal 為 0，代表所有 Y 值(時間)相等
+            // 若回歸預測也完全精準(ssResidual=0)則 R2 為 1，否則為 0
+            const rSquared = ssTotal === 0 ? (ssResidual === 0 ? 1 : 0) : 1 - (ssResidual / ssTotal);
+
+            // 計算趨勢線的起點和終點
+            const xValues = data.map(d => d[xKey]);
+            const minX = Math.min(...xValues);
+            const maxX = Math.max(...xValues);
+
+            return {
+                slope,
+                intercept,
+                rSquared: Math.max(0, Math.min(1, rSquared)), // 強制限制在 0~1 區間
+                startPoint: { x: minX, y: slope * minX + intercept },
+                endPoint: { x: maxX, y: slope * maxX + intercept },
+                // 性價比指標：斜率越負 = 傷害轉換效率越高
+                efficiency: -slope * 100 // 每100點傷害減少的時間（分鐘）
+            };
+        };
+
+        // 計算所有職業的趨勢線數據
+        const calculateAllTrendLines = () => {
+            const trendData = {};
+            ALL_CLASSES.forEach(job => {
+                const jobData = FULL_DATA.filter(d => d.class === job && d.time > 0);
+                if (jobData.length >= 2) {
+                    trendData[job] = calculateLinearRegression(jobData);
+                }
+            });
+            return trendData;
+        };
+
+        // 計算法師專用趨勢線（時間為X軸，傷害/SP為Y軸）
+        const calculateMageTrendLines = () => {
+            const mageData = FULL_DATA.filter(d => d.class === '法師' && d.time > 0);
+            if (mageData.length < 2) return null;
+
+            // 傷害 vs 時間趨勢線（X=時間, Y=傷害）
+            const damageTrend = calculateLinearRegression(mageData, 'time', 'damage');
+
+            // SP vs 時間趨勢線（X=時間, Y=SP）
+            const spData = mageData.filter(d => d.sp);
+            const spTrend = spData.length >= 2 ? calculateLinearRegression(spData, 'time', 'sp') : null;
+
+            return { damageTrend, spTrend };
+        };
+
+        // --- 1. 內建 SVG 圖示元件 ---
+        const Icon = ({ children, className = "", size = 20, ...props }) => (
+            <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className} {...props}>{children}</svg>
+        );
+
+        const TrophyIcon = (p) => <Icon {...p}><path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6" /><path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18" /><path d="M4 22h16" /><path d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22" /><path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22" /><path d="M18 2H6v7a6 6 0 0 0 12 0V2Z" /></Icon>;
+        const UsersIcon = (p) => <Icon {...p}><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M22 21v-2a4 4 0 0 0-3-3.87" /><path d="M16 3.13a4 4 0 0 1 0 7.75" /></Icon>;
+        const ZapIcon = (p) => <Icon {...p}><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" /></Icon>;
+        const TargetIcon = (p) => <Icon {...p}><circle cx="12" cy="12" r="10" /><circle cx="12" cy="12" r="6" /><circle cx="12" cy="12" r="2" /></Icon>;
+        const AlertIcon = (p) => <Icon {...p}><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z" /><path d="M12 9v4" /><path d="M12 17h.01" /></Icon>;
+        const InfoIcon = (p) => <Icon {...p}><circle cx="12" cy="12" r="10" /><path d="M12 16v-4" /><path d="M12 8h.01" /></Icon>;
+        const TrendingUpIcon = (p) => <Icon {...p}><polyline points="23 6 13.5 15.5 8.5 10.5 1 18" /><polyline points="17 6 23 6 23 12" /></Icon>;
+        const ResetIcon = (p) => <Icon {...p}><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" /><path d="M3 3v5h5" /></Icon>;
+        const MenuIcon = (p) => <Icon {...p}><line x1="4" x2="20" y1="12" y2="12" /><line x1="4" x2="20" y1="6" y2="6" /><line x1="4" x2="20" y1="18" y2="18" /></Icon>;
+        const CloseIcon = (p) => <Icon {...p}><path d="M18 6 6 18" /><path d="m6 6 12 12" /></Icon>;
+        const ShieldIcon = (p) => <Icon {...p}><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10" /></Icon>;
+        const BackIcon = (p) => <Icon {...p}><path d="m15 18-6-6 6-6" /></Icon>;
+        const SwordIcon = (p) => <Icon {...p}><polyline points="14.5 17.5 3 6 3 3 6 3 17.5 14.5" /><line x1="13" y1="19" x2="19" y2="13" /><line x1="16" y1="16" x2="20" y2="20" /><line x1="19" y1="21" x2="21" y2="19" /></Icon>;
+        const ActivityIcon = (p) => <Icon {...p}><path d="M22 12h-4l-3 9L9 3l-3 9H2" /></Icon>;
+        const SearchIcon = (p) => <Icon {...p}><circle cx="11" cy="11" r="8" /><path d="m21 21-4.3-4.3" /></Icon>;
+        const ExternalLinkIcon = (p) => <Icon {...p}><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" /><polyline points="15 3 21 3 21 9" /><line x1="10" y1="14" x2="21" y2="3" /></Icon>;
+
+        // --- 2. 完整 98 筆數據導入 ---
+        const CSV_DATA = `
+魔劍士,88,金變覺醒,260,純白技,55,
+魔劍士,91,金變,254,8紅8紫,32,
+魔劍士,91,金變,250,全滿,30,
+槍手,91,紫變,280,紅紫滿1金,6,
+槍手,91,紫變,255,滿技能,10,
+槍手,87,金變,250,5紅(神射手+快速射擊(士兵)+死狙+破壞射擊+防禦灌穿),30,
+槍手,90,金變,240,滿技,14,
+槍手,91,紫變,205,紅紫滿/無商城紫,17,
+槍手,90,紫變覺醒,194,缺商城紫,15,
+雷神,90,金變(金覺醒),196,缺商城紫,30,備註:206傷/25分
+雷神,90,紫變,312,6紅1紫,12,
+雷神,90,紫變覺醒,265,紅紫滿/無商城紫,10,
+雷神,90,金變,253,4紅技,20,
+雷神,91,金變覺醒,242,滿紅滿紫，無商城紫/無血盟紫,20,
+雷神,90,紫變(金變),240,有血盟紫,20,備註:15分
+雷神,90,紫變,225,有血盟紫,25,
+雷神,90,紫變覺醒,257,PVE技能全滿/無商城紫/無金,22,
+聖劍,91,金變,220,紅紫技PVE滿,23,SP 106
+黑妖,91,金變覺醒,310,全滿/有夢魘,9,
+黑妖,88,金變,300,4紅技,0,失敗
+黑妖,90,紫變覺醒,220,紅紫滿/無商城紫/有夢魘,26,
+法師,91,紫變覺醒,240,古代究光/無商城紫/全程召喚,12,SP 127
+狂戰士,90,金變,321,滿紅4紫,15,
+狂戰士,89,紫變,320,6紅技,55,
+妖精,91,金變覺醒,325,紅紫滿/有商城紫/有雙金(2金Lv.1),5,
+妖精,91,金變,320,滿技,5,
+妖精,91,金變覺醒,280,全滿,7,
+妖精,90,紫變覺醒,250,紅紫滿/無商城紫/有精靈王,20,
+妖精,91,紫變覺醒,250,紅紫滿/無商城紫/有精靈王/有+6風耳,10,
+死神,91,紫變,345,技能全滿/有商城紫/,13,
+王族,89,金變,300,4紅，有勇猛大師,15,
+王族,88,紫變,280,4紅，有勇猛大師,25,
+王族,90,紫變,260,滿(無雙獨特紫),20,
+王族,87,金變覺醒,258,only勇猛大師,25,
+王族,90,金變,255,4紅，有勇猛大師,13,
+王族,87,金變覺醒,255,only勇猛大師,25,
+王族,89,紫變覺醒,239,1紫6紅,23,
+王族,90,紫變覺醒,225,紅紫PVE技能全滿,26,古代神之矛
+法師,91,紫變,197,紅紫技全滿/沒商城紫/沒有金技,35,SP 140
+槍手,88,紫變,221,紅滿/準備開火/無800/無商城紫/有+5地耳,20,
+魔劍士,91,紫變覺醒,273,紅紫技全滿/缺商城紫/缺1金/藍武,45,
+法師,90,金變,187,古代究光/全程召喚,27,SP 124
+法師,91,紫變覺醒,188,紅紫滿/2金/無商城紫/全程召喚,17,SP 134
+龍鬥,91,紫變覺醒,271,紅紫滿/無商城紫/雙金技,42,
+魔劍士,88,金變,260,1紅超聲波,27,
+魔劍士,91,紫變覺醒,275,紅紫全滿(缺三位),26,
+龍鬥,88,紫變覺醒,257,PVE紅滿0紫,31,7弒血者(精工+9 6%)、有死騎手環+3%攻擊
+黑妖,90,紫變覺醒,255,紅紫技全滿/無金技/有商城紫/9紫武,15,7紫武打28分鐘，武器影響大
+王族,89,金變覺醒,225,滿紅/風屬性單手劍,27,
+狂戰士,90,紫變,241,紅紫滿/缺商城紫,20,
+槍手,90,金變覺醒,240,紅紫技全滿/有準備開火/金技:和平使者,11,紅技：死狙、穿甲彈、快速射擊(士兵)、神射手
+騎士,91,金變覺醒,230,紅紫滿/缺商城紫/2金技,27,新篇章
+魔劍士,90,紫變覺醒,265,紅紫滿(缺三位2招),27,9三階紫武(精工+8攻 +15%屬爆)，風龍水晶
+聖劍,91,紫變,221,紅紫滿/缺商城紫/雙金技,25,風龍水晶，撐魔法爆擊
+騎士,91,紫變,300,技能全滿,45,
+龍鬥,91,金變覺醒,250,滿紫紅技/有商城紫/3金技,18,
+法師,91,金變,200,紅紫全滿/究光古代/全程召喚/缺商城紫,10,SP 125
+法師,91,金變覺醒,300,技能除暗黑流星全滿/有商城紫/究光古代/全程召喚,6,SP 156
+槍手,90,金變覺醒,219,紅紫技全滿/有血盟紫/沒商城紫/,15,7歐槍
+魔劍士,90,金變覺醒,238,紅紫技滿/缺商城紫/沒金技,35,
+狂戰士,90,紫變覺醒,227,紅紫技只學PVE技能/缺商城紫/,55,7精工紫斧10攻15爆，地屬
+雷神,91,紫變覺醒,231,滿紅滿紫技/2金技,22,二階7紫武
+魔劍士,91,金變,300,紅紫技全滿,28,7三階風屬紫武
+龍鬥,91,金變覺醒,309,紅紫技全滿,9,
+黑妖,91,金變覺醒,325,紅紫技全滿/有夢魘,8,
+聖劍,91,金變覺醒,277,紅紫金技能全滿/有商城紫,13,SP 110
+聖劍,91,金變覺醒,314,紅紫金技能全滿/有商城紫,13,SP 99
+狂戰士,86,青變覺醒,292,只有白技,25,
+法師,91,金變覺醒,257,用普攻+冰刺攻擊,28,
+騎士,91,金變覺醒,380,紅紫技滿/有傷城紫,13,
+法師,91,金變,226,插古代究光/全程召喚,13,SP 121
+王族,86,金變,220,only勇猛大師,26,
+黑妖,90,金變覺醒,251,5紅2紫/1金技/有夢魘/無商城紫,39,
+騎士,91,金變,263,紅紫技全滿/無商城紫,40,
+暗騎,81,金變覺醒,238,4紅技,45,
+雷神,90,紫變覺醒,228,紅紫技能全滿/有血盟紫,16,
+雷神,91,金變覺醒,236,紅紫金技能全滿/有血盟紫/,12,
+王族,83,金變覺醒,221,4紅技,32,
+槍手,83,紫變覺醒,234,3紅技,32,神射手、死狙、快射士兵
+法師,91,金變覺醒,247,11紅8紫/有商城紫/2金技/全程召喚/究光古代,12,SP 150
+雷神,90,紫變覺醒,212,紅紫技能全滿/有血盟紫/無商城紫/,30,
+狂戰士,91,金變覺醒,270,紅紫技能全滿/缺商城紫/無金技,14,9三階矛
+王族,86,金變覺醒,210,4紅技/有勇猛大師,30,
+王族,86,紫變覺醒,261,3紅技/有勇猛大師,53,6酷寒
+雷神,91,金變覺醒,290,紅紫金技能全滿/有血盟紫/無商城紫/,8,波賽頓矛
+妖精,91,金變覺醒,298,紅紫滿/有商城紫/有雙金(2金Lv.1),20,8沙哈
+法師,91,金變,200,7紅8紫技/有商城紫/2金技/全程召喚/究光古代,11,SP 135
+魔劍士,91,青變,267,紅紫技能全滿/無商城紫,18,7歐武
+法師,91,金變,260,紅紫技能全滿/有商城紫/2金技/全程召喚/究光古代,10,SP 134
+王族,88,,246,5紅技/無商城紫,35,
+雷神,91,金變覺醒,246,紅紫技能全滿/缺商城紫/無金技,11,7歐矛
+雷神,90,紫變覺醒,260,紅技滿/紫技缺女武神/有血盟紫/有商城紫,21,7克特
+魔劍士,90,金變覺醒,260,紅紫技能全滿/缺商城紫/2金技,26,8三階紫武
+聖劍,91,青變,300,紅紫技能全滿/缺商城紫/2金技,14,7歐單
+雷神,91,金變覺醒,288,紅紫技能全滿/有商城紫/有血盟紫/,6,7波賽頓
+王族,86,紫變覺醒,220,2紅技/有勇猛大師,30,拿底短增加攻速
+雷神,91,金變覺醒,240,紅紫技能全滿/2金技/缺商城紫,12,用7地屬性惡魔王矛傷(12傷15%爆)
+魔劍士,90,紫變覺醒,317,紅紫技能全滿/無商城紫/2金技,21,
+黑妖,90,金變覺醒,263,5紅2紫/1金技/有夢魘/無商城紫,28,
+槍手,89,金變覺醒,220,4紫8紅技/有血盟紫/無商城紫,14,7歐砲 (地屬8傷 8%爆),
+`;
+
+        const COLORS = {
+            '槍手': '#F59E0B', '雷神': '#3B82F6', '法師': '#8B5CF6', '黑妖': '#10B981', '王族': '#EF4444',
+            '魔劍士': '#EC4899', '狂戰士': '#9CA3AF', '妖精': '#A3E635', '死神': '#F3F4F6', '龍鬥': '#F97316',
+            '聖劍': '#06B6D4', '騎士': '#64748B', '暗騎': '#1e293b'
+        };
+
+        const ALL_CLASSES = Object.keys(COLORS);
+
+        // 解析 CSV
+        const parseAndProcessData = (csv) => {
+            return csv.trim().split('\n').map((line, idx) => {
+                const parts = line.split(',');
+                const item = {
+                    id: idx + 1,
+                    class: parts[0],
+                    level: parseInt(parts[1]) || 0,
+                    trans: parts[2],
+                    damage: parseInt(parts[3]) || 0,
+                    skill: parts[4],
+                    time: parseInt(parts[5]) || 0,
+                    note: parts[6] || ""
+                };
+
+                const noteSP = item.note.match(/SP\s*(\d+)/i);
+                const damageSP = line.match(/\(SP\s*(\d+)\)/i);
+                item.sp = noteSP ? parseInt(noteSP[1]) : (damageSP ? parseInt(damageSP[1]) : null);
+
+                if (item.time === 0) return { ...item, efficiency: 0 };
+                return item;
+            });
+        };
+
+        const FULL_DATA = parseAndProcessData(CSV_DATA);
+
+        // 自訂圖表形狀
+        const CustomShape = (props) => {
+            const { cx, cy, fill, payload } = props;
+            const isHighTier = payload.trans && (payload.trans.includes('金') || payload.trans.includes('青'));
+
+            if (isHighTier) {
+                return <path d={`M${cx},${cy - 6} L${cx + 6},${cy + 6} L${cx - 6},${cy + 6} Z`} fill={fill} stroke="#fff" strokeWidth={1} />;
+            }
+            return <circle cx={cx} cy={cy} r={5} fill={fill} stroke="#fff" strokeWidth={1} />;
+        };
+
+
+
+        const Overview = ({ onViewClass }) => {
+            const [activeJob, setActiveJob] = useState(null);
+            const [showTrendLines, setShowTrendLines] = useState(true);
+            const [hoverPos, setHoverPos] = useState(null);
+            const scalesRef = useRef(null);
+
+            // 計算所有趨勢線
+            const trendLines = useMemo(() => calculateAllTrendLines(), []);
+
+            // 計算法師專用趨勢線
+            const mageTrendLines = useMemo(() => calculateMageTrendLines(), []);
+
+            // 計算數據邊界
+            const chartBounds = useMemo(() => {
+                const damages = FULL_DATA.map(d => d.damage);
+                const times = FULL_DATA.filter(d => d.time > 0).map(d => d.time);
+                const sps = FULL_DATA.filter(d => d.sp).map(d => d.sp);
+
+                const xMin = Math.min(...damages) - 20;
+                const xMax = Math.max(...damages) + 20;
+                const yMax = Math.max(...times) + 5;
+
+                const spMin = sps.length > 0 ? Math.min(...sps) - 10 : 80;
+                const spMax = sps.length > 0 ? Math.max(...sps) + 10 : 200;
+
+                return { xMin, xMax, yMax, spMin, spMax };
+            }, []);
+
+
+
+            const isMageActive = activeJob === '法師';
+
+            return (
+                <div className="space-y-8 animate-fade-in pb-12">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                        {[
+                            { name: '槍手', icon: <TrophyIcon />, color: 'amber', desc: 'CP王者：194傷打15分' },
+                            { name: '王族', icon: <UsersIcon />, color: 'red', desc: '低成本：2紅技穩過' },
+                            { name: '妖精', icon: <ZapIcon />, color: 'green', desc: '極速：頂配5分通關' },
+                            { name: '雷神', icon: <TargetIcon />, color: 'blue', desc: '最穩定：極限驅動輸出' }
+                        ].map(item => (
+                            <div key={item.name} onClick={() => onViewClass(item.name)} className="bg-slate-800 p-5 rounded-xl border border-slate-700 shadow-lg cursor-pointer hover:border-slate-400 transition-all">
+                                <div className={`p-2 w-10 h-10 rounded-lg bg-${item.color}-500/20 text-${item.color}-500 mb-3`}>{item.icon}</div>
+                                <h3 className="font-bold text-white text-lg">{item.name}</h3>
+                                <p className="text-slate-400 text-sm mt-1">{item.desc}</p>
+                            </div>
+                        ))}
+                    </div>
+                    <div className="flex flex-wrap justify-center gap-4 mb-6">
+                        <a
+                            href="https://www.youtube.com/@bandonplay"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-2 px-5 py-2.5 bg-amber-600/10 hover:bg-amber-600/20 text-amber-500 rounded-xl text-base font-black tracking-wider transition-all border border-amber-500/30 group shadow-lg hover:shadow-amber-500/10"
+                        >
+                            <span className="w-2 h-2 bg-amber-500 rounded-full animate-pulse shadow-[0_0_10px_rgba(245,158,11,0.8)]"></span>
+                            資料整理製作：編董不雷
+                            <ExternalLinkIcon size={18} className="group-hover:translate-x-1 group-hover:-translate-y-1 transition-transform" />
+                        </a>
+                        <a
+                            href="https://bandon1016.github.io/8-anniv-class-change/"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-2 px-5 py-2.5 bg-indigo-600/10 hover:bg-indigo-600/20 text-indigo-400 rounded-xl text-base font-black tracking-wider transition-all border border-indigo-500/30 group shadow-lg hover:shadow-indigo-500/10"
+                        >
+                            <span className="w-2 h-2 bg-indigo-500 rounded-full animate-pulse shadow-[0_0_10px_rgba(99,102,241,0.8)]"></span>
+                            8周年4職業轉職建議&工具
+                            <ExternalLinkIcon size={18} className="group-hover:translate-x-1 group-hover:-translate-y-1 transition-transform" />
+                        </a>
+                    </div>
+
+                    <div className="bg-slate-800 p-6 rounded-xl border border-slate-700 shadow-2xl">
+                        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-end mb-6 gap-4">
+                            <div>
+                                <h3 className="text-xl font-bold text-white flex items-center gap-2">
+                                    <ActivityIcon size={24} className="text-amber-500" />
+                                    {isMageActive ? '法師專屬效率分析 (傷害 vs SP)' : '全職業效率落點分析 (100筆資料)'}
+                                </h3>
+                                <div className="text-slate-400 text-sm mt-1">
+                                    {isMageActive ?
+                                        <p>雙軸比較：<span className="text-slate-300 font-bold">● 傷害(左軸)</span> 與 <span className="text-pink-400 font-bold">◆ SP(右軸)</span> 對時間的影響</p> :
+                                        <>
+                                            <p>區塊說明：<span className="text-green-400 font-bold">● 極速區(&lt;15分)</span> / <span className="text-yellow-400 font-bold">● 穩定區(15-30分)</span> / <span className="text-red-400 font-bold">● 苦戰區(&gt;30分)</span></p>
+                                            <p className="text-slate-500 text-xs mt-1">形狀說明：▲ = 金變/青變(高成本) | ● = 紫變(中成本)</p>
+                                        </>
+                                    }
+                                </div>
+                            </div>
+                            <div className="flex gap-2">
+                                <button onClick={() => setShowTrendLines(!showTrendLines)} className={`flex items-center gap-1 px-3 py-1.5 ${showTrendLines ? 'bg-amber-600 hover:bg-amber-500' : 'bg-slate-700 hover:bg-slate-600'} text-white rounded-lg text-sm transition-colors border ${showTrendLines ? 'border-amber-500' : 'border-slate-600'}`}>
+                                    <TrendingUpIcon size={16} /> {showTrendLines ? '隱藏趨勢線' : '顯示趨勢線'}
+                                </button>
+                            </div>
+                        </div >
+
+                        <div className="h-[450px] w-full relative select-none">
+                            {/* --- 滑鼠游標位置數值顯示 (Floating Label) --- */}
+                            {hoverPos && (
+                                <div className="absolute top-2 left-1/2 -translate-x-1/2 bg-slate-900/90 border border-slate-700 px-4 py-2 rounded-full shadow-2xl text-sm flex gap-6 z-50 pointer-events-none backdrop-blur-md border-amber-500/30 ring-1 ring-white/10 animate-fade-in">
+                                    <div className="flex items-center gap-2">
+                                        <SwordIcon size={14} className="text-slate-400" />
+                                        <span className="text-slate-400 text-xs">目前位置傷害：</span>
+                                        <span className="text-white font-mono font-bold text-base">{Math.round(isMageActive ? hoverPos.y : hoverPos.x)}</span>
+                                    </div>
+                                    <div className="h-4 w-px bg-slate-700 my-auto"></div>
+                                    <div className="flex items-center gap-2">
+                                        <ActivityIcon size={14} className="text-amber-500" />
+                                        <span className="text-slate-400 text-xs">目前位置時間：</span>
+                                        <span className="text-amber-400 font-mono font-bold text-base">{Math.round(isMageActive ? hoverPos.x : hoverPos.y)} 分</span>
+                                    </div>
+                                </div>
+                            )}
+
+                            <ResponsiveContainer width="100%" height="100%">
+                                <ScatterChart
+                                    margin={{ top: 20, right: 30, bottom: 30, left: 10 }}
+                                    onMouseMove={(e) => {
+                                        if (e && e.chartX !== undefined) {
+                                            const xId = isMageActive ? "time" : "damage";
+                                            const yId = isMageActive ? "left" : 0;
+                                            const xAxis = e.xAxisMap ? e.xAxisMap[xId] || Object.values(e.xAxisMap)[0] : null;
+                                            const yAxis = e.yAxisMap ? e.yAxisMap[yId] || Object.values(e.yAxisMap)[0] : null;
+                                            if (xAxis && yAxis && xAxis.scale && yAxis.scale) {
+                                                setHoverPos({ x: xAxis.scale.invert(e.chartX), y: yAxis.scale.invert(e.chartY) });
+                                            }
+                                        }
+                                    }}
+                                    onMouseLeave={() => setHoverPos(null)}
+                                >
+                                    <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
+
+                                    {/* --- 十字準星線 --- */}
+                                    {hoverPos && (
+                                        <ReferenceLine
+                                            xAxisId={isMageActive ? "time" : "damage"}
+                                            x={hoverPos.x}
+                                            stroke="#475569"
+                                            strokeDasharray="3 3"
+                                            isFront
+                                        />
+                                    )}
+                                    {hoverPos && (
+                                        <ReferenceLine
+                                            yAxisId={isMageActive ? "left" : undefined}
+                                            y={hoverPos.y}
+                                            stroke="#475569"
+                                            strokeDasharray="3 3"
+                                            isFront
+                                        />
+                                    )}
+
+                                    {/* --- 坐標軸配置 --- */}
+                                    {isMageActive && (
+                                        <XAxis
+                                            xAxisId="time"
+                                            allowDataOverflow
+                                            dataKey="time"
+                                            name="時間"
+                                            type="number"
+                                            stroke="#94a3b8"
+                                            label={{ value: '通關時間 (分)', position: 'bottom', fill: '#94a3b8', dy: 10 }}
+                                            domain={[0, chartBounds.yMax]}
+                                        />
+                                    )}
+                                    {!isMageActive && (
+                                        <XAxis
+                                            xAxisId="damage"
+                                            allowDataOverflow
+                                            dataKey="damage"
+                                            name="傷害"
+                                            type="number"
+                                            domain={[chartBounds.xMin, chartBounds.xMax]}
+                                            stroke="#94a3b8"
+                                            label={{ value: '面板傷害 (Damage)', position: 'bottom', fill: '#94a3b8', dy: 10 }}
+                                        />
+                                    )}
+
+                                    {isMageActive && (
+                                        <YAxis
+                                            yAxisId="left"
+                                            dataKey="damage"
+                                            name="傷害"
+                                            type="number"
+                                            stroke="#8B5CF6"
+                                            label={{ value: '面板傷害', angle: -90, position: 'insideLeft', fill: '#8B5CF6' }}
+                                            domain={[chartBounds.xMin, chartBounds.xMax]}
+                                        />
+                                    )}
+                                    {isMageActive && (
+                                        <YAxis
+                                            yAxisId="right"
+                                            dataKey="sp"
+                                            name="SP"
+                                            type="number"
+                                            orientation="right"
+                                            stroke="#ec4899"
+                                            label={{ value: 'SP (魔攻)', angle: 90, position: 'insideRight', fill: '#ec4899' }}
+                                            domain={[chartBounds.spMin, chartBounds.spMax]}
+                                        />
+                                    )}
+                                    {!isMageActive && (
+                                        <YAxis
+                                            dataKey="time"
+                                            name="時間"
+                                            type="number"
+                                            domain={[0, chartBounds.yMax]}
+                                            stroke="#94a3b8"
+                                            label={{ value: '通關時間 (分)', angle: -90, position: 'insideLeft', fill: '#94a3b8' }}
+                                        />
+                                    )}
+
+                                    {/* --- 參考區域 (背景色塊) --- */}
+                                    {!isMageActive && <ReferenceArea xAxisId="damage" y1={0} y2={15} fill="#22c55e" fillOpacity={0.15} stroke="none" ifOverflow="extend" />}
+                                    {!isMageActive && <ReferenceArea xAxisId="damage" y1={15} y2={30} fill="#eab308" fillOpacity={0.1} stroke="none" ifOverflow="extend" />}
+                                    {!isMageActive && <ReferenceArea xAxisId="damage" y1={30} y2={300} fill="#ef4444" fillOpacity={0.15} stroke="none" ifOverflow="extend" />}
+
+                                    {isMageActive && <ReferenceArea xAxisId="time" yAxisId="left" x1={0} x2={15} fill="#22c55e" fillOpacity={0.15} stroke="none" ifOverflow="extend" />}
+                                    {isMageActive && <ReferenceArea xAxisId="time" yAxisId="left" x1={15} x2={30} fill="#eab308" fillOpacity={0.1} stroke="none" ifOverflow="extend" />}
+                                    {isMageActive && <ReferenceArea xAxisId="time" yAxisId="left" x1={30} x2={300} fill="#ef4444" fillOpacity={0.15} stroke="none" ifOverflow="extend" />}
+
+                                    <Tooltip cursor={{ strokeDasharray: '3 3' }} content={({ active, payload }) => {
+                                        if (active && payload && payload.length) {
+                                            const d = payload[0].payload;
+                                            if (!d.class) return null;
+                                            const isSPDot = d.isSPData;
+                                            return (
+                                                <div className="bg-slate-900 border border-slate-600 p-4 rounded-lg shadow-2xl text-sm min-w-[180px] z-50">
+                                                    <p className="font-bold text-lg mb-2" style={{ color: isSPDot ? '#ec4899' : COLORS[d.class] }}>
+                                                        {d.class} Lv.{d.level} {isSPDot ? '(SP數據)' : ''}
+                                                    </p>
+                                                    <div className="space-y-1 text-slate-300">
+                                                        <p>通關時間：<span className="text-amber-400 font-bold">{d.time === 0 ? '失敗' : d.time + ' 分'}</span></p>
+                                                        <p>傷害：<span className="text-white font-bold">{d.damage}</span></p>
+                                                        {d.sp && <p>SP：<span className="text-pink-400 font-bold">{d.sp}</span></p>}
+                                                        <p>變身：<span className="text-slate-300">{d.trans}</span></p>
+                                                        <p className="text-xs text-slate-500 pt-2 border-t border-slate-700 mt-2">{d.skill}</p>
+                                                        {d.note && <p className="text-xs text-blue-400 italic">"{d.note}"</p>}
+                                                    </div>
+                                                </div>
+                                            );
+                                        }
+                                        return null;
+                                    }} />
+
+                                    {isMageActive && <Legend verticalAlign="top" height={36} />}
+
+                                    {/* --- 1. 法師模式特殊渲染 (雙Y軸) --- */}
+                                    {isMageActive && (
+                                        <Scatter
+                                            name="面板傷害"
+                                            data={FULL_DATA.filter(d => d.class === '法師' && d.time > 0)}
+                                            fill={COLORS['法師']}
+                                            xAxisId="time"
+                                            yAxisId="left"
+                                            shape="circle"
+                                        />
+                                    )}
+                                    {isMageActive && (
+                                        <Scatter
+                                            name="SP (魔攻)"
+                                            data={FULL_DATA.filter(d => d.class === '法師' && d.time > 0 && d.sp)}
+                                            fill="#ec4899"
+                                            xAxisId="time"
+                                            yAxisId="right"
+                                            shape="diamond"
+                                        />
+                                    )}
+                                    {isMageActive && showTrendLines && mageTrendLines && mageTrendLines.damageTrend && (
+                                        <Scatter
+                                            name="傷害趨勢"
+                                            data={[
+                                                { time: mageTrendLines.damageTrend.startPoint.x, damage: mageTrendLines.damageTrend.startPoint.y },
+                                                { time: mageTrendLines.damageTrend.endPoint.x, damage: mageTrendLines.damageTrend.endPoint.y }
+                                            ]}
+                                            fill="none"
+                                            line={{ stroke: COLORS['法師'], strokeWidth: 3, strokeDasharray: '8 4' }}
+                                            lineType="joint"
+                                            legendType="none"
+                                            xAxisId="time"
+                                            yAxisId="left"
+                                            shape={() => null}
+                                        />
+                                    )}
+                                    {isMageActive && showTrendLines && mageTrendLines && mageTrendLines.spTrend && (
+                                        <Scatter
+                                            name="SP趨勢"
+                                            data={[
+                                                { time: mageTrendLines.spTrend.startPoint.x, sp: mageTrendLines.spTrend.startPoint.y },
+                                                { time: mageTrendLines.spTrend.endPoint.x, sp: mageTrendLines.spTrend.endPoint.y }
+                                            ]}
+                                            fill="none"
+                                            line={{ stroke: '#ec4899', strokeWidth: 3, strokeDasharray: '8 4' }}
+                                            lineType="joint"
+                                            legendType="none"
+                                            xAxisId="time"
+                                            yAxisId="right"
+                                            shape={() => null}
+                                        />
+                                    )}
+
+                                    {/* --- 2. 其他職業模式渲染 --- */}
+                                    {!isMageActive && ALL_CLASSES.map(job => {
+                                        if (activeJob && activeJob !== job) return null;
+                                        const jobData = FULL_DATA.filter(d => d.class === job && d.time > 0);
+                                        return (
+                                            <Scatter
+                                                key={job}
+                                                name={job}
+                                                data={jobData}
+                                                fill={COLORS[job]}
+                                                fillOpacity={0.9}
+                                                stroke="#fff"
+                                                strokeWidth={1}
+                                                shape={<CustomShape />}
+                                                xAxisId="damage"
+                                            />
+                                        );
+                                    })}
+
+                                    {/* --- 3. 其他職業趨勢線 --- */}
+                                    {!isMageActive && showTrendLines && ALL_CLASSES.map(job => {
+                                        if (activeJob && activeJob !== job) return null;
+                                        const trend = trendLines[job];
+                                        if (!trend) return null;
+                                        return (
+                                            <Scatter
+                                                key={`trend-${job}`}
+                                                name={`${job}趨勢`}
+                                                data={[
+                                                    { damage: trend.startPoint.x, time: Math.max(0, trend.startPoint.y) },
+                                                    { damage: trend.endPoint.x, time: Math.max(0, trend.endPoint.y) }
+                                                ]}
+                                                fill="none"
+                                                line={{ stroke: COLORS[job], strokeWidth: 2, strokeDasharray: '8 4' }}
+                                                lineType="joint"
+                                                legendType="none"
+                                                xAxisId="damage"
+                                                shape={() => null}
+                                            />
+                                        );
+                                    })}
+
+
+
+                                </ScatterChart>
+                            </ResponsiveContainer>
+                            <div className="absolute inset-0 flex items-center justify-center pointer-events-none opacity-5"><span className="text-9xl font-black text-white">編董不雷</span></div>
+                        </div>
+
+                        <div className="mt-8 flex flex-wrap justify-center gap-2">
+                            {ALL_CLASSES.map(job => (
+                                <button key={job} onClick={() => setActiveJob(activeJob === job ? null : job)} className={`px-3 py-1.5 rounded-full text-sm font-bold transition-all border ${activeJob === job ? 'bg-slate-600 border-white text-white scale-110 shadow-lg' : 'bg-slate-900/50 border-slate-700 text-slate-400 hover:bg-slate-700'}`}>
+                                    <span className="inline-block w-2.5 h-2.5 rounded-full mr-2" style={{ backgroundColor: COLORS[job] }} />{job}
+                                </button>
+                            ))}
+                        </div>
+
+                        <div className="mt-12 grid grid-cols-1 md:grid-cols-2 gap-6 border-t border-slate-700 pt-8">
+                            <div className="bg-slate-800/50 p-6 rounded-xl border border-slate-700/50">
+                                <h4 className="text-lg font-bold text-white mb-3 flex items-center gap-2">
+                                    <ZapIcon className="text-yellow-400" /> 1. 重要屬性
+                                </h4>
+                                <p className="text-slate-300 text-sm leading-relaxed">
+                                    地龍懼怕地屬性，針對地屬性傷害、屬性爆擊加強可明顯提高傷害。另外，槍手、妖精也要使用有"貫通"效果的武器才不至導致傷害減半。
+                                </p>
+                            </div>
+                            <div className="bg-slate-800/50 p-6 rounded-xl border border-slate-700/50">
+                                <h4 className="text-lg font-bold text-white mb-3 flex items-center gap-2">
+                                    <TrendingUpIcon className="text-blue-400" /> 2. 攻擊速度
+                                </h4>
+                                <p className="text-slate-300 text-sm leading-relaxed">
+                                    變身攻速直接影響效率，能覺醒盡量拚，收藏或能提高攻速的飾品(如：風龍水晶)也能強化或換上。
+                                </p>
+                            </div>
+                            <div className="bg-slate-800/50 p-6 rounded-xl border border-slate-700/50">
+                                <h4 className="text-lg font-bold text-white mb-3 flex items-center gap-2">
+                                    <TargetIcon className="text-red-400" /> 3. 關鍵技能
+                                </h4>
+                                <p className="text-slate-300 text-sm leading-relaxed">
+                                    每個職業都有影響傷害的關鍵紅紫技，比如王族的勇猛(大師)、雷神的極限驅動...等等，朝這類技能著手能大幅提升效率。
+                                </p>
+                            </div>
+                            <div className="bg-slate-800/50 p-6 rounded-xl border border-slate-700/50">
+                                <h4 className="text-lg font-bold text-white mb-3 flex items-center gap-2">
+                                    <AlertIcon className="text-amber-400" /> 4. 職業挑選
+                                </h4>
+                                <p className="text-slate-300 text-sm leading-relaxed">
+                                    上面極少數提供數據的職業，不要猶豫！避開就對了！選對職業少努力20年。
+                                </p>
+                            </div>
+                        </div>
+
+                        {/* 趨勢線與性價比解釋區塊 */}
+                        {
+                            showTrendLines && (
+                                <div className="mt-8 bg-gradient-to-br from-slate-800 to-slate-900 p-6 rounded-xl border border-amber-500/30 shadow-xl">
+                                    <h4 className="text-xl font-bold text-white mb-4 flex items-center gap-2">
+                                        <TrendingUpIcon className="text-amber-500" /> 趨勢線與性價比分析
+                                    </h4>
+
+                                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+                                        <div className="bg-slate-900/50 p-4 rounded-lg border-l-4 border-green-500">
+                                            <h5 className="text-green-400 font-bold mb-2">📈 趨勢線解讀</h5>
+                                            <ul className="text-slate-300 text-sm space-y-2">
+                                                <li>• <span className="text-white font-bold">趨勢線位置越低</span>：該職業在相同傷害下，通關時間越短，<span className="text-green-400">性價比越高</span></li>
+                                                <li>• <span className="text-white font-bold">趨勢線斜率越陡（向下）</span>：每增加一點傷害，時間減少越多，<span className="text-green-400">投資回報率越高</span></li>
+                                                <li>• <span className="text-white font-bold">趨勢線越平</span>：傷害對時間影響較小，可能需要依賴技能或其他因素</li>
+                                            </ul>
+                                        </div>
+
+                                        <div className="bg-slate-900/50 p-4 rounded-lg border-l-4 border-amber-500">
+                                            <h5 className="text-amber-400 font-bold mb-2">💡 性價比指標</h5>
+                                            <ul className="text-slate-300 text-sm space-y-2">
+                                                <li>• <span className="text-white font-bold">高性價比職業</span>：趨勢線在「極速區」（綠色區域）穿過，代表低投入高回報</li>
+                                                <li>• <span className="text-white font-bold">穩定型職業</span>：趨勢線斜率穩定，無論傷害高低都能完成通關</li>
+                                                <li>• <span className="text-white font-bold">門檻型職業</span>：趨勢線離散度高，表示需要特定條件才能發揮效率</li>
+                                            </ul>
+                                        </div>
+                                    </div>
+
+                                    {/* 各職業趨勢線數據表 */}
+                                    <div className="overflow-x-auto">
+                                        <h5 className="text-slate-300 font-bold mb-3">📊 各職業效率指標排名</h5>
+                                        <table className="w-full text-sm">
+                                            <thead className="bg-slate-900 text-slate-400">
+                                                <tr>
+                                                    <th className="px-3 py-2 text-left">職業</th>
+                                                    <th className="px-3 py-2 text-center">樣本數</th>
+                                                    <th className="px-3 py-2 text-center">效率指標</th>
+                                                    <th className="px-3 py-2 text-center">R²</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody className="divide-y divide-slate-700">
+                                                {Object.entries(trendLines)
+                                                    .sort((a, b) => b[1].rSquared - a[1].rSquared)
+                                                    .map(([job, trend]) => {
+                                                        const jobData = FULL_DATA.filter(d => d.class === job && d.time > 0);
+                                                        const efficiencyLevel = trend.efficiency > 0.15 ? 'text-green-400' :
+                                                            trend.efficiency > 0.08 ? 'text-yellow-400' : 'text-red-400';
+                                                        return (
+                                                            <tr key={job} className="hover:bg-slate-700/50">
+                                                                <td className="px-3 py-2">
+                                                                    <span className="inline-block w-3 h-3 rounded-full mr-2" style={{ backgroundColor: COLORS[job] }}></span>
+                                                                    <span className="font-bold" style={{ color: COLORS[job] }}>{job}</span>
+                                                                </td>
+                                                                <td className="px-3 py-2 text-center text-slate-400">{jobData.length}</td>
+                                                                <td className={`px-3 py-2 text-center font-bold ${efficiencyLevel}`}>
+                                                                    {trend.efficiency.toFixed(2)} 分/100傷
+                                                                </td>
+                                                                <td className="px-3 py-2 text-center text-slate-400">
+                                                                    {(trend.rSquared * 100).toFixed(0)}%
+                                                                </td>
+                                                            </tr>
+                                                        );
+                                                    })}
+                                            </tbody>
+                                        </table>
+                                        <p className="text-slate-500 text-xs mt-2">
+                                            * 效率指標 = 每增加100點傷害可減少的通關時間（分鐘）| R² = 趨勢線擬合度（越高表示數據越符合線性關係）
+                                        </p>
+                                    </div>
+                                </div>
+                            )
+                        }
+
+                    </div >
+                </div >
+            );
+        };
+
+        const ClassDetail = ({ className, onBack }) => {
+            const data = useMemo(() => FULL_DATA.filter(d => d.class === className).sort((a, b) => a.damage - b.damage), [className]);
+            const best = [...data].filter(d => d.time > 0).sort((a, b) => a.time - b.time)[0];
+            const worst = [...data].filter(d => d.time > 0).sort((a, b) => b.time - a.time)[0];
+
+            const getTimeColor = (time, bestTime, worstTime) => {
+                if (time === 0) return 'text-red-600 font-black';
+                if (time === bestTime) return 'text-green-400 font-black scale-110 inline-block drop-shadow-[0_0_8px_rgba(74,222,128,0.5)]';
+                if (time === worstTime) return 'text-red-400 font-bold';
+                if (time <= 15) return 'text-green-400 font-bold';
+                if (time >= 40) return 'text-red-400 font-bold';
+                return 'text-white font-medium';
+            };
+
+            const getAnalysis = () => {
+                switch (className) {
+                    case '法師': return {
+                        verdict: 'Special Tier',
+                        summary: '技能門檻極高。不能單純用面板傷害來衡量，必須具備「古代究光」等核心技能才能打出高效成績。',
+                        key: '技能完整度決定一切。法師的機制特殊，無法直接與其他職業透過面板傷害進行橫向比較。',
+                        trap: '沒有足夠的關鍵技能（如究光）與回魔支撐，千萬不要貿然挑戰。'
+                    };
+                    case '魔劍士': return {
+                        verdict: 'C Tier',
+                        summary: '中距離攻擊職業。數據顯示極端落差：260傷害白技打55分，紅技打27分。普攻係數低。',
+                        key: '傷害完全來自技能堆疊。',
+                        trap: '雖為中距離，但沒紅技進場就是坐牢，千萬別用白技打。'
+                    };
+                    case '龍鬥': return {
+                        verdict: 'B- Tier',
+                        summary: '中距離攻擊職業。表現不穩，有雙金技打42分的案例，也有9分鐘的極速紀錄。',
+                        key: '弱點曝光疊加的穩定性。',
+                        trap: '操作上下限差距極大，需長時間暖機。'
+                    };
+                    case '死神': return {
+                        verdict: 'A Tier',
+                        summary: '中距離攻擊職業。數據顯示高傷(345)下效率極佳(13分)，輸出節奏明快。',
+                        key: '技能全滿與商城紫技的加持。',
+                        trap: '目前樣本多為頂規機體，中低階機體表現待驗證。'
+                    };
+                    case '槍手': return { verdict: 'S Tier', summary: 'CP值王者。數據驗證：194傷害紫變(15分)完勝250傷害金變(30分)。', key: '紅紫技完整度 > 變身顏色。攻擊技能完整性必須要撐高。', trap: '87等金變案例顯示，等級與技能若不全，金變也救不了。' };
+                    case '雷神': return { verdict: 'A Tier', summary: '下限極高。即使只有 196 傷害也能磨死地龍 (30分)。', key: '血盟獨特紫技「極限驅動」提供了穩定的被動輸出。', trap: '無明顯陷阱，耐心磨必過，極限驅動，潛能無限。' };
+                    case '王族': return { verdict: 'Budget King', summary: '只需兩本紅技(勇猛意志+大師)即可穩定通關，養成成本最低。', key: '「勇猛意志」提供穩定攻速，無需任何紫技也能單挑。', trap: '需有耐心，打得慢不是打不過。' };
+                    case '黑妖': return { verdict: 'Risk Tier', summary: '極速傳說 (8分鐘)，但生存壓力巨大。', key: '「夢魘」生存技與「破壞盔甲」爆發技缺一不可。', trap: '機體不夠硬且沒夢魘，進場即死亡。' };
+                    case '騎士': return { verdict: 'Odd Tier', summary: '反直覺：300傷紫變需45分，230傷金變僅需27分。', key: '金技/覺醒效果可能遠大於面板傷害。', trap: '高傷紫變效率極低，需特別注意技能配置。' };
+                    case '暗騎': return { verdict: 'B Tier', summary: '樣本較少，目前 238 傷害需 45 分，效率中下。', key: '需更多高階機體數據驗證。', trap: '目前數據顯示低傷效率不佳。' };
+                    default: return { verdict: '標準型', summary: '效率隨傷害線性提升。', key: '紅紫技完整度。', trap: '高傷害若配白技效率依然低落。' };
+                }
+            };
+            const analysis = getAnalysis();
+
+            return (
+                <div className="space-y-6 animate-fade-in pb-12">
+                    <button onClick={onBack} className="flex items-center text-slate-400 hover:text-white gap-1 group transition-colors"><BackIcon size={18} className="group-hover:-translate-x-1 transition-transform" />返回總覽</button>
+
+                    <div className="bg-slate-800 rounded-xl p-8 border border-slate-700 shadow-xl">
+                        <div className="flex flex-col md:flex-row justify-between gap-6 mb-8">
+                            <div>
+                                <h2 className="text-4xl font-black text-white" style={{ color: COLORS[className] }}>{className}</h2>
+                                <div className="mt-3 flex gap-3"><span className="px-3 py-1 bg-slate-700 rounded-full text-sm font-bold border border-slate-600">{analysis.verdict}</span></div>
+                            </div>
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 flex-1">
+                                <div className="bg-slate-900/50 p-4 rounded-lg border-l-4 border-blue-500">
+                                    <h4 className="text-blue-400 font-bold mb-1 flex items-center gap-2"><InfoIcon size={16} />數據總結</h4>
+                                    <p className="text-slate-300 text-sm">{analysis.summary}</p>
+                                </div>
+                                <div className="bg-slate-900/50 p-4 rounded-lg border-l-4 border-amber-500">
+                                    <h4 className="text-amber-400 font-bold mb-1 flex items-center gap-2"><TargetIcon size={16} />關鍵變因</h4>
+                                    <p className="text-slate-300 text-sm">{analysis.key}</p>
+                                </div>
+                                <div className="bg-slate-900/50 p-4 rounded-lg border-l-4 border-red-500">
+                                    <h4 className="text-red-400 font-bold mb-1 flex items-center gap-2"><AlertIcon size={16} />避坑指南</h4>
+                                    <p className="text-slate-300 text-sm">{analysis.trap}</p>
+                                </div>
+                            </div>
+                        </div>
+
+                        {best && worst && (
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+                                <div className="bg-gradient-to-br from-green-900/30 to-slate-900 border border-green-500/30 p-6 rounded-xl shadow-lg relative overflow-hidden">
+                                    <div className="absolute top-0 right-0 w-24 h-24 bg-green-500/10 rounded-full blur-2xl -mr-10 -mt-10"></div>
+                                    <div className="flex items-center justify-between mb-4 border-b border-green-500/20 pb-2">
+                                        <span className="text-green-400 text-sm font-bold uppercase tracking-wider flex items-center gap-2"><ZapIcon size={16} /> 最高效率 (Best Run)</span>
+                                        <span className="text-3xl font-black text-white">{best.time} <span className="text-sm font-normal text-slate-400">分</span></span>
+                                    </div>
+                                    <div className="grid grid-cols-2 gap-y-3 text-sm">
+                                        <div><span className="text-slate-500 text-xs block">機體傷害</span><span className="text-white font-bold text-lg">{best.damage}</span></div>
+                                        <div><span className="text-slate-500 text-xs block">變身等級</span><span className="text-white">{best.trans}</span></div>
+                                        <div className="col-span-2"><span className="text-slate-500 text-xs block">技能配置</span><span className="text-slate-300">{best.skill}</span></div>
+                                        <div className="col-span-2"><span className="text-slate-500 text-xs block">關鍵備註</span><span className="text-green-300">{best.note || '無'}</span></div>
+                                    </div>
+                                </div>
+
+                                <div className="bg-gradient-to-br from-red-900/30 to-slate-900 border border-red-500/30 p-6 rounded-xl shadow-lg relative overflow-hidden">
+                                    <div className="absolute top-0 right-0 w-24 h-24 bg-red-500/10 rounded-full blur-2xl -mr-10 -mt-10"></div>
+                                    <div className="flex items-center justify-between mb-4 border-b border-red-500/20 pb-2">
+                                        <span className="text-red-400 text-sm font-bold uppercase tracking-wider flex items-center gap-2"><AlertIcon size={16} /> 最低效率 (Worst Run)</span>
+                                        <span className="text-3xl font-black text-white">{worst.time === 0 ? '失敗' : worst.time} <span className="text-sm font-normal text-slate-400">{worst.time === 0 ? '' : '分'}</span></span>
+                                    </div>
+                                    <div className="grid grid-cols-2 gap-y-3 text-sm">
+                                        <div><span className="text-slate-500 text-xs block">機體傷害</span><span className="text-white font-bold text-lg">{worst.damage}</span></div>
+                                        <div><span className="text-slate-500 text-xs block">變身等級</span><span className="text-white">{worst.trans}</span></div>
+                                        <div className="col-span-2"><span className="text-slate-500 text-xs block">技能配置</span><span className="text-slate-300">{worst.skill}</span></div>
+                                        <div className="col-span-2"><span className="text-slate-500 text-xs block">關鍵備註</span><span className="text-red-300">{worst.note || '無'} {className === '雷神' ? ' 極限驅動，潛能無限' : ''}</span></div>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
+                        <div className="overflow-x-auto rounded-xl border border-slate-700">
+                            <table className="w-full text-left text-sm text-slate-300">
+                                <thead className="bg-slate-900 text-xs text-slate-400 uppercase">
+                                    <tr><th className="px-4 py-3">編號</th><th className="px-4 py-3">等級</th><th className="px-4 py-3">變身</th><th className="px-4 py-3">傷害</th><th className="px-4 py-3">技能</th><th className="px-4 py-3">備註</th><th className="px-4 py-3 text-right">時間</th></tr>
+                                </thead>
+                                <tbody className="divide-y divide-slate-700">
+                                    {data.map(row => (
+                                        <tr key={row.id} className="hover:bg-slate-700/50">
+                                            <td className="px-4 py-3 text-slate-500">#{row.id}</td>
+                                            <td className="px-4 py-3">{row.level}</td>
+                                            <td className="px-4 py-3">{row.trans}</td>
+                                            <td className="px-4 py-3 font-bold text-white">{row.damage}</td>
+                                            <td className="px-4 py-3 text-xs text-slate-400 max-w-[200px] truncate" title={row.skill}>{row.skill}</td>
+                                            <td className="px-4 py-3 text-xs text-slate-500 max-w-[150px] truncate" title={row.note}>{row.note}</td>
+                                            <td className={`px-4 py-3 text-right font-mono ${getTimeColor(row.time, best?.time, worst?.time)}`}>
+                                                {row.time === 0 ? '失敗' : `${row.time}m`}
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        const App = () => {
+            const [view, setView] = useState('overview');
+            const [selectedClass, setSelectedClass] = useState('槍手');
+            const [isMenuOpen, setIsMenuOpen] = useState(false);
+
+            const handleClassSelect = (job) => { setView('detail'); setSelectedClass(job); setIsMenuOpen(false); window.scrollTo(0, 0); };
+
+            return (
+                <div className="min-h-screen bg-slate-950 text-slate-200 font-sans">
+                    <nav className="bg-slate-900 border-b border-slate-800 sticky top-0 z-50 shadow-xl">
+                        <div className="max-w-7xl mx-auto px-4 h-16 flex items-center justify-between">
+                            <div className="flex items-center gap-2 cursor-pointer" onClick={() => setView('overview')}>
+                                <div className="bg-gradient-to-br from-indigo-600 to-purple-700 p-2 rounded-lg shadow-lg"><ShieldIcon size={24} className="text-white" /></div>
+                                <h1 className="text-lg font-bold text-white tracking-tight hidden sm:block">天堂M 地龍單挑<span className="text-amber-500">終極</span>分析</h1>
+                            </div>
+                            <div className="hidden md:flex gap-1 overflow-x-auto px-4 no-scrollbar">
+                                <button onClick={() => setView('overview')} className={`px-3 py-2 rounded-md text-sm font-medium transition-all ${view === 'overview' ? 'text-amber-400 bg-slate-800' : 'text-slate-400 hover:text-white'}`}>總覽</button>
+                                {ALL_CLASSES.map(job => (
+                                    <button key={job} onClick={() => handleClassSelect(job)} className={`px-3 py-2 rounded-md text-sm font-medium whitespace-nowrap transition-all ${view === 'detail' && selectedClass === job ? 'text-amber-400 bg-slate-800' : 'text-slate-400 hover:text-white'}`}>{job}</button>
+                                ))}
+                            </div>
+                            <div className="md:hidden"><button onClick={() => setIsMenuOpen(!isMenuOpen)} className="p-2 text-slate-400 hover:text-white transition-colors">{isMenuOpen ? <CloseIcon /> : <MenuIcon />}</button></div>
+                        </div>
+                        {isMenuOpen && (
+                            <div className="md:hidden bg-slate-900 border-t border-slate-800 absolute w-full shadow-2xl z-50 p-4 grid grid-cols-3 gap-2">
+                                <button onClick={() => { setView('overview'); setIsMenuOpen(false); }} className="col-span-3 py-3 bg-slate-800 rounded-lg text-amber-500 font-bold mb-2">返回總覽</button>
+                                {ALL_CLASSES.map(job => (
+                                    <button key={job} onClick={() => handleClassSelect(job)} className="py-2 bg-slate-800/50 rounded-lg text-xs text-slate-300">{job}</button>
+                                ))}
+                            </div>
+                        )}
+                    </nav>
+                    <main className="max-w-7xl mx-auto px-4 py-8 min-h-screen">
+                        {view === 'overview' ? <Overview onViewClass={handleClassSelect} /> : <ClassDetail className={selectedClass} onBack={() => setView('overview')} />}
+                    </main>
+                    <footer className="bg-slate-900 border-t border-slate-800 py-12">
+                        <div className="max-w-7xl mx-auto px-4 text-center">
+                            <p className="text-slate-500 text-sm">數據來源：所有數據階取自玩家回報，分析僅供參考 (2025年12月)</p>
+                            <div className="mt-8 flex justify-center">
+                                <a
+                                    href="https://www.youtube.com/@bandonplay"
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="inline-flex items-center gap-2 px-5 py-2.5 bg-amber-600/10 hover:bg-amber-600/20 text-amber-500 rounded-xl text-base font-black tracking-wider transition-all border border-amber-500/30 group shadow-lg hover:shadow-amber-500/10"
+                                >
+                                    <span className="w-2 h-2 bg-amber-500 rounded-full animate-pulse shadow-[0_0_10px_rgba(245,158,11,0.8)]"></span>
+                                    資料整理製作：編董不雷
+                                    <ExternalLinkIcon size={18} className="group-hover:translate-x-1 group-hover:-translate-y-1 transition-transform" />
+                                </a>
+                            </div>
+                        </div>
+                    </footer>
+                </div>
+            );
+        };
+
+        ReactDOM.render(<App />, document.getElementById('root'));
+    </script>
+</body>
+
+</html>

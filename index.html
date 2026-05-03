@@ -150,16 +150,16 @@
             return trendData;
         };
 
-        // 計算法師專用趨勢線（時間為X軸，傷害/SP為Y軸）
-        const calculateMageTrendLines = () => {
-            const mageData = FULL_DATA.filter(d => d.class === '法師' && d.time > 0);
-            if (mageData.length < 2) return null;
+        // 計算雙軸職業專用趨勢線（時間為X軸，傷害/SP為Y軸）
+        const calculateDualAxisTrendLines = (targetClass) => {
+            const targetData = FULL_DATA.filter(d => d.class === targetClass && d.time > 0);
+            if (targetData.length < 2) return null;
 
             // 傷害 vs 時間趨勢線（X=時間, Y=傷害）
-            const damageTrend = calculateLinearRegression(mageData, 'time', 'damage');
+            const damageTrend = calculateLinearRegression(targetData, 'time', 'damage');
 
             // SP vs 時間趨勢線（X=時間, Y=SP）
-            const spData = mageData.filter(d => d.sp);
+            const spData = targetData.filter(d => d.sp);
             const spTrend = spData.length >= 2 ? calculateLinearRegression(spData, 'time', 'sp') : null;
 
             return { damageTrend, spTrend };
@@ -206,7 +206,6 @@
 雷神,90,紫變(金變),240,有血盟紫,20,備註:15分
 雷神,90,紫變,225,有血盟紫,25,
 雷神,90,紫變覺醒,257,PVE技能全滿/無商城紫/無金,22,
-聖劍,91,金變,220,紅紫技PVE滿,23,SP 106
 黑妖,91,金變覺醒,310,全滿/有夢魘,9,
 黑妖,88,金變,300,4紅技,0,失敗
 黑妖,90,紫變覺醒,220,紅紫滿/無商城紫/有夢魘,26,
@@ -242,7 +241,6 @@
 槍手,90,金變覺醒,240,紅紫技全滿/有準備開火/金技:和平使者,11,紅技：死狙、穿甲彈、快速射擊(士兵)、神射手
 騎士,91,金變覺醒,230,紅紫滿/缺商城紫/2金技,27,新篇章
 魔劍士,90,紫變覺醒,265,紅紫滿(缺三位2招),27,9三階紫武(精工+8攻 +15%屬爆)，風龍水晶
-聖劍,91,紫變,221,紅紫滿/缺商城紫/雙金技,25,風龍水晶，撐魔法爆擊
 騎士,91,紫變,300,技能全滿,45,
 龍鬥,91,金變覺醒,250,滿紫紅技/有商城紫/3金技,18,
 法師,91,金變,200,紅紫全滿/究光古代/全程召喚/缺商城紫,10,SP 125
@@ -254,8 +252,6 @@
 魔劍士,91,金變,300,紅紫技全滿,28,7三階風屬紫武
 龍鬥,91,金變覺醒,309,紅紫技全滿,9,
 黑妖,91,金變覺醒,325,紅紫技全滿/有夢魘,8,
-聖劍,91,金變覺醒,277,紅紫金技能全滿/有商城紫,13,SP 110
-聖劍,91,金變覺醒,314,紅紫金技能全滿/有商城紫,13,SP 99
 狂戰士,86,青變覺醒,292,只有白技,25,
 法師,91,金變覺醒,257,用普攻+冰刺攻擊,28,
 騎士,91,金變覺醒,380,紅紫技滿/有傷城紫,13,
@@ -282,13 +278,32 @@
 雷神,91,金變覺醒,246,紅紫技能全滿/缺商城紫/無金技,11,7歐矛
 雷神,90,紫變覺醒,260,紅技滿/紫技缺女武神/有血盟紫/有商城紫,21,7克特
 魔劍士,90,金變覺醒,260,紅紫技能全滿/缺商城紫/2金技,26,8三階紫武
-聖劍,91,青變,300,紅紫技能全滿/缺商城紫/2金技,14,7歐單
 雷神,91,金變覺醒,288,紅紫技能全滿/有商城紫/有血盟紫/,6,7波賽頓
 王族,86,紫變覺醒,220,2紅技/有勇猛大師,30,拿底短增加攻速
 雷神,91,金變覺醒,240,紅紫技能全滿/2金技/缺商城紫,12,用7地屬性惡魔王矛傷(12傷15%爆)
 魔劍士,90,紫變覺醒,317,紅紫技能全滿/無商城紫/2金技,21,
 黑妖,90,金變覺醒,263,5紅2紫/1金技/有夢魘/無商城紫,28,
 槍手,89,金變覺醒,220,4紫8紅技/有血盟紫/無商城紫,14,7歐砲 (地屬8傷 8%爆),
+聖劍,75,紫變覺醒,160,3紅技/沒紫技,24,紫副手，7克特，精工：風屬性傷害3，屬性爆擊3% SP 124
+聖劍,91,金變覺醒,178,紅滿3紫1金(化身)/缺商城紫/有熾天使,13,7海刀 SP 110
+聖劍,91,紫變,166,紅紫技滿/缺商城紫,16,紫副手，7克特，精工：地屬性傷害5，屬性爆擊14% SP 110
+聖劍,90,青變覺醒,290,紅技滿/沒學紫金技,12,紫副手，8克特，精工：地屬性傷害6，屬性爆擊10% SP 70
+聖劍,88,金變覺醒,215,紅技滿/沒學紫金技,50,紫副手，9雷雨，地靈3階 SP 56
+聖劍,89,金變覺醒,240,紅滿/3紫技/有熾天使/有狂襲3,30,紫副手，7騎士團，精工：地屬性傷害2，屬性爆擊7% SP 75
+聖劍,88,紫變覺醒,178,1紅技/,29,紫副手，7克特，精工：風屬性傷害13，屬性爆擊13% SP 124
+聖劍,90,金變覺醒,268,紅紫技滿/缺商城紫/缺2金,11,紫副手，精工：地屬性傷害13，屬性爆擊13% SP 78
+聖劍,90,紫變,255,滿紅/4紫/缺商城紫/無熾天使,13,紫副手，9雷雨，沒精工。紫技：狂3.混3.紫迴.紫聖 SP 105
+聖劍,90,紫變,160,紅紫技滿/缺商城紫/缺2金,26,紫副手，9惡單，精工：水屬性傷害10、屬性爆擊15% SP 111
+聖劍,89,金變覺醒,249,2紅技,35,紫副手，7克特，精工：地屬性傷害1，屬性爆擊1% SP 46
+聖劍,88,金變覺醒,188,紅技滿/沒學紫金技,0,失敗 紫副手，9雷雨，地靈3階 SP 70
+聖劍,90,紫變覺醒,152,紅紫技滿/有獨特紫/缺商城紫,19,紫副手，9克特，精工：地屬性傷害6，屬性爆擊11% SP 100
+聖劍,90,紫變,174,紅紫技滿/缺熾天使/缺商城紫,33,紫副手，7惡單，精工：沒精工 SP 97
+聖劍,91,金變覺醒,310,紅紫金技能全滿,7,紫副手，7艾單，精工：風屬性傷害10，屬性爆擊15% SP 114
+聖劍,90,金變覺醒,168,紅紫技滿/缺商城紫/缺熾天使,23,紫副手，7死劍，精工：地屬性傷害7，屬性爆擊11% SP 84
+聖劍,91,紫變,255,紅紫金技能全滿,20,紫副手，7海露拜，精工：沒精工 SP 53
+聖劍,91,紫變,220,紅紫技滿/缺商城紫/有熾天使,12,紫副手，7克特，精工：地屬性傷害10，屬性爆擊14% SP 112
+聖劍,91,金變覺醒,210,紅紫技滿/缺商城紫/有熾天使,19,紫副手，7克特，精工：沒精工 SP 74
+聖劍,91,紫變,274,紅紫技滿/缺商城紫/有熾天使,10,紫副手，8克特，精工：地屬性傷害6，屬性爆擊6% SP 85
 `;
 
         const COLORS = {
@@ -348,7 +363,7 @@
             const trendLines = useMemo(() => calculateAllTrendLines(), []);
 
             // 計算法師專用趨勢線
-            const mageTrendLines = useMemo(() => calculateMageTrendLines(), []);
+            const dualAxisTrendLines = useMemo(() => calculateDualAxisTrendLines(activeJob), [activeJob]);
 
             // 計算數據邊界
             const chartBounds = useMemo(() => {
@@ -368,16 +383,16 @@
 
 
 
-            const isMageActive = activeJob === '法師';
+            const isDualAxisActive = activeJob === '法師' || activeJob === '聖劍';
 
             return (
                 <div className="space-y-8 animate-fade-in pb-12">
                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                         {[
-                            { name: '槍手', icon: <TrophyIcon />, color: 'amber', desc: 'CP王者：194傷打15分' },
-                            { name: '王族', icon: <UsersIcon />, color: 'red', desc: '低成本：2紅技穩過' },
-                            { name: '妖精', icon: <ZapIcon />, color: 'green', desc: '極速：頂配5分通關' },
-                            { name: '雷神', icon: <TargetIcon />, color: 'blue', desc: '最穩定：極限驅動輸出' }
+                            { name: '雷神', icon: <TargetIcon />, color: 'blue', desc: '最穩可靠：低門檻平均17分' },
+                            { name: '聖劍', icon: <ShieldIcon />, color: 'cyan', desc: 'CP王者：全職業最低門檻152傷' },
+                            { name: '槍手', icon: <TrophyIcon />, color: 'amber', desc: '遠攻首選：194傷平均16分' },
+                            { name: '妖精', icon: <ZapIcon />, color: 'green', desc: '極速天花板：平均11分通關' }
                         ].map(item => (
                             <div key={item.name} onClick={() => onViewClass(item.name)} className="bg-slate-800 p-5 rounded-xl border border-slate-700 shadow-lg cursor-pointer hover:border-slate-400 transition-all">
                                 <div className={`p-2 w-10 h-10 rounded-lg bg-${item.color}-500/20 text-${item.color}-500 mb-3`}>{item.icon}</div>
@@ -414,11 +429,14 @@
                             <div>
                                 <h3 className="text-xl font-bold text-white flex items-center gap-2">
                                     <ActivityIcon size={24} className="text-amber-500" />
-                                    {isMageActive ? '法師專屬效率分析 (傷害 vs SP)' : '全職業效率落點分析 (100筆資料)'}
+                                    {isDualAxisActive ? `${activeJob}專屬效率分析 (傷害 vs SP)` : '全職業效率落點分析 (100筆資料)'}
                                 </h3>
                                 <div className="text-slate-400 text-sm mt-1">
-                                    {isMageActive ?
-                                        <p>雙軸比較：<span className="text-slate-300 font-bold">● 傷害(左軸)</span> 與 <span className="text-pink-400 font-bold">◆ SP(右軸)</span> 對時間的影響</p> :
+                                    {isDualAxisActive ?
+                                        <>
+                                            <p>雙軸比較：<span className="text-slate-300 font-bold">● 傷害(左軸)</span> 與 <span className="text-pink-400 font-bold">◆ SP(右軸)</span> 對時間的影響</p>
+                                            <p className="mt-1">區塊說明：<span className="text-green-400 font-bold">● 極速區(&lt;15分)</span> / <span className="text-yellow-400 font-bold">● 穩定區(15-30分)</span> / <span className="text-red-400 font-bold">● 苦戰區(&gt;30分)</span></p>
+                                        </> :
                                         <>
                                             <p>區塊說明：<span className="text-green-400 font-bold">● 極速區(&lt;15分)</span> / <span className="text-yellow-400 font-bold">● 穩定區(15-30分)</span> / <span className="text-red-400 font-bold">● 苦戰區(&gt;30分)</span></p>
                                             <p className="text-slate-500 text-xs mt-1">形狀說明：▲ = 金變/青變(高成本) | ● = 紫變(中成本)</p>
@@ -440,13 +458,13 @@
                                     <div className="flex items-center gap-2">
                                         <SwordIcon size={14} className="text-slate-400" />
                                         <span className="text-slate-400 text-xs">目前位置傷害：</span>
-                                        <span className="text-white font-mono font-bold text-base">{Math.round(isMageActive ? hoverPos.y : hoverPos.x)}</span>
+                                        <span className="text-white font-mono font-bold text-base">{Math.round(isDualAxisActive ? hoverPos.y : hoverPos.x)}</span>
                                     </div>
                                     <div className="h-4 w-px bg-slate-700 my-auto"></div>
                                     <div className="flex items-center gap-2">
                                         <ActivityIcon size={14} className="text-amber-500" />
                                         <span className="text-slate-400 text-xs">目前位置時間：</span>
-                                        <span className="text-amber-400 font-mono font-bold text-base">{Math.round(isMageActive ? hoverPos.x : hoverPos.y)} 分</span>
+                                        <span className="text-amber-400 font-mono font-bold text-base">{Math.round(isDualAxisActive ? hoverPos.x : hoverPos.y)} 分</span>
                                     </div>
                                 </div>
                             )}
@@ -456,8 +474,8 @@
                                     margin={{ top: 20, right: 30, bottom: 30, left: 10 }}
                                     onMouseMove={(e) => {
                                         if (e && e.chartX !== undefined) {
-                                            const xId = isMageActive ? "time" : "damage";
-                                            const yId = isMageActive ? "left" : 0;
+                                            const xId = isDualAxisActive ? "time" : "damage";
+                                            const yId = isDualAxisActive ? "left" : 0;
                                             const xAxis = e.xAxisMap ? e.xAxisMap[xId] || Object.values(e.xAxisMap)[0] : null;
                                             const yAxis = e.yAxisMap ? e.yAxisMap[yId] || Object.values(e.yAxisMap)[0] : null;
                                             if (xAxis && yAxis && xAxis.scale && yAxis.scale) {
@@ -472,7 +490,7 @@
                                     {/* --- 十字準星線 --- */}
                                     {hoverPos && (
                                         <ReferenceLine
-                                            xAxisId={isMageActive ? "time" : "damage"}
+                                            xAxisId={isDualAxisActive ? "time" : "damage"}
                                             x={hoverPos.x}
                                             stroke="#475569"
                                             strokeDasharray="3 3"
@@ -481,7 +499,7 @@
                                     )}
                                     {hoverPos && (
                                         <ReferenceLine
-                                            yAxisId={isMageActive ? "left" : undefined}
+                                            yAxisId={isDualAxisActive ? "left" : undefined}
                                             y={hoverPos.y}
                                             stroke="#475569"
                                             strokeDasharray="3 3"
@@ -490,7 +508,7 @@
                                     )}
 
                                     {/* --- 坐標軸配置 --- */}
-                                    {isMageActive && (
+                                    {isDualAxisActive && (
                                         <XAxis
                                             xAxisId="time"
                                             allowDataOverflow
@@ -502,7 +520,7 @@
                                             domain={[0, chartBounds.yMax]}
                                         />
                                     )}
-                                    {!isMageActive && (
+                                    {!isDualAxisActive && (
                                         <XAxis
                                             xAxisId="damage"
                                             allowDataOverflow
@@ -515,7 +533,7 @@
                                         />
                                     )}
 
-                                    {isMageActive && (
+                                    {isDualAxisActive && (
                                         <YAxis
                                             yAxisId="left"
                                             dataKey="damage"
@@ -526,7 +544,7 @@
                                             domain={[chartBounds.xMin, chartBounds.xMax]}
                                         />
                                     )}
-                                    {isMageActive && (
+                                    {isDualAxisActive && (
                                         <YAxis
                                             yAxisId="right"
                                             dataKey="sp"
@@ -538,7 +556,7 @@
                                             domain={[chartBounds.spMin, chartBounds.spMax]}
                                         />
                                     )}
-                                    {!isMageActive && (
+                                    {!isDualAxisActive && (
                                         <YAxis
                                             dataKey="time"
                                             name="時間"
@@ -550,13 +568,13 @@
                                     )}
 
                                     {/* --- 參考區域 (背景色塊) --- */}
-                                    {!isMageActive && <ReferenceArea xAxisId="damage" y1={0} y2={15} fill="#22c55e" fillOpacity={0.15} stroke="none" ifOverflow="extend" />}
-                                    {!isMageActive && <ReferenceArea xAxisId="damage" y1={15} y2={30} fill="#eab308" fillOpacity={0.1} stroke="none" ifOverflow="extend" />}
-                                    {!isMageActive && <ReferenceArea xAxisId="damage" y1={30} y2={300} fill="#ef4444" fillOpacity={0.15} stroke="none" ifOverflow="extend" />}
+                                    {!isDualAxisActive && <ReferenceArea xAxisId="damage" y1={0} y2={15} fill="#22c55e" fillOpacity={0.15} stroke="none" ifOverflow="extend" />}
+                                    {!isDualAxisActive && <ReferenceArea xAxisId="damage" y1={15} y2={30} fill="#eab308" fillOpacity={0.1} stroke="none" ifOverflow="extend" />}
+                                    {!isDualAxisActive && <ReferenceArea xAxisId="damage" y1={30} y2={300} fill="#ef4444" fillOpacity={0.15} stroke="none" ifOverflow="extend" />}
 
-                                    {isMageActive && <ReferenceArea xAxisId="time" yAxisId="left" x1={0} x2={15} fill="#22c55e" fillOpacity={0.15} stroke="none" ifOverflow="extend" />}
-                                    {isMageActive && <ReferenceArea xAxisId="time" yAxisId="left" x1={15} x2={30} fill="#eab308" fillOpacity={0.1} stroke="none" ifOverflow="extend" />}
-                                    {isMageActive && <ReferenceArea xAxisId="time" yAxisId="left" x1={30} x2={300} fill="#ef4444" fillOpacity={0.15} stroke="none" ifOverflow="extend" />}
+                                    {isDualAxisActive && <ReferenceArea xAxisId="time" yAxisId="left" x1={0} x2={15} fill="#22c55e" fillOpacity={0.15} stroke="none" ifOverflow="extend" />}
+                                    {isDualAxisActive && <ReferenceArea xAxisId="time" yAxisId="left" x1={15} x2={30} fill="#eab308" fillOpacity={0.1} stroke="none" ifOverflow="extend" />}
+                                    {isDualAxisActive && <ReferenceArea xAxisId="time" yAxisId="left" x1={30} x2={300} fill="#ef4444" fillOpacity={0.15} stroke="none" ifOverflow="extend" />}
 
                                     <Tooltip cursor={{ strokeDasharray: '3 3' }} content={({ active, payload }) => {
                                         if (active && payload && payload.length) {
@@ -582,38 +600,38 @@
                                         return null;
                                     }} />
 
-                                    {isMageActive && <Legend verticalAlign="top" height={36} />}
+                                    {isDualAxisActive && <Legend verticalAlign="top" height={36} />}
 
-                                    {/* --- 1. 法師模式特殊渲染 (雙Y軸) --- */}
-                                    {isMageActive && (
+                                    {/* --- 1. 雙軸模式特殊渲染 (雙Y軸) --- */}
+                                    {isDualAxisActive && (
                                         <Scatter
                                             name="面板傷害"
-                                            data={FULL_DATA.filter(d => d.class === '法師' && d.time > 0)}
-                                            fill={COLORS['法師']}
+                                            data={FULL_DATA.filter(d => d.class === activeJob && d.time > 0)}
+                                            fill={COLORS[activeJob]}
                                             xAxisId="time"
                                             yAxisId="left"
                                             shape="circle"
                                         />
                                     )}
-                                    {isMageActive && (
+                                    {isDualAxisActive && (
                                         <Scatter
                                             name="SP (魔攻)"
-                                            data={FULL_DATA.filter(d => d.class === '法師' && d.time > 0 && d.sp)}
+                                            data={FULL_DATA.filter(d => d.class === activeJob && d.time > 0 && d.sp)}
                                             fill="#ec4899"
                                             xAxisId="time"
                                             yAxisId="right"
                                             shape="diamond"
                                         />
                                     )}
-                                    {isMageActive && showTrendLines && mageTrendLines && mageTrendLines.damageTrend && (
+                                    {isDualAxisActive && showTrendLines && dualAxisTrendLines && dualAxisTrendLines.damageTrend && (
                                         <Scatter
                                             name="傷害趨勢"
                                             data={[
-                                                { time: mageTrendLines.damageTrend.startPoint.x, damage: mageTrendLines.damageTrend.startPoint.y },
-                                                { time: mageTrendLines.damageTrend.endPoint.x, damage: mageTrendLines.damageTrend.endPoint.y }
+                                                { time: dualAxisTrendLines.damageTrend.startPoint.x, damage: dualAxisTrendLines.damageTrend.startPoint.y },
+                                                { time: dualAxisTrendLines.damageTrend.endPoint.x, damage: dualAxisTrendLines.damageTrend.endPoint.y }
                                             ]}
                                             fill="none"
-                                            line={{ stroke: COLORS['法師'], strokeWidth: 3, strokeDasharray: '8 4' }}
+                                            line={{ stroke: COLORS[activeJob], strokeWidth: 3, strokeDasharray: '8 4' }}
                                             lineType="joint"
                                             legendType="none"
                                             xAxisId="time"
@@ -621,12 +639,12 @@
                                             shape={() => null}
                                         />
                                     )}
-                                    {isMageActive && showTrendLines && mageTrendLines && mageTrendLines.spTrend && (
+                                    {isDualAxisActive && showTrendLines && dualAxisTrendLines && dualAxisTrendLines.spTrend && (
                                         <Scatter
                                             name="SP趨勢"
                                             data={[
-                                                { time: mageTrendLines.spTrend.startPoint.x, sp: mageTrendLines.spTrend.startPoint.y },
-                                                { time: mageTrendLines.spTrend.endPoint.x, sp: mageTrendLines.spTrend.endPoint.y }
+                                                { time: dualAxisTrendLines.spTrend.startPoint.x, sp: dualAxisTrendLines.spTrend.startPoint.y },
+                                                { time: dualAxisTrendLines.spTrend.endPoint.x, sp: dualAxisTrendLines.spTrend.endPoint.y }
                                             ]}
                                             fill="none"
                                             line={{ stroke: '#ec4899', strokeWidth: 3, strokeDasharray: '8 4' }}
@@ -639,7 +657,7 @@
                                     )}
 
                                     {/* --- 2. 其他職業模式渲染 --- */}
-                                    {!isMageActive && ALL_CLASSES.map(job => {
+                                    {!isDualAxisActive && ALL_CLASSES.map(job => {
                                         if (activeJob && activeJob !== job) return null;
                                         const jobData = FULL_DATA.filter(d => d.class === job && d.time > 0);
                                         return (
@@ -658,7 +676,7 @@
                                     })}
 
                                     {/* --- 3. 其他職業趨勢線 --- */}
-                                    {!isMageActive && showTrendLines && ALL_CLASSES.map(job => {
+                                    {!isDualAxisActive && showTrendLines && ALL_CLASSES.map(job => {
                                         if (activeJob && activeJob !== job) return null;
                                         const trend = trendLines[job];
                                         if (!trend) return null;
@@ -848,7 +866,8 @@
                         key: '技能全滿與商城紫技的加持。',
                         trap: '目前樣本多為頂規機體，中低階機體表現待驗證。'
                     };
-                    case '槍手': return { verdict: 'S Tier', summary: 'CP值王者。數據驗證：194傷害紫變(15分)完勝250傷害金變(30分)。', key: '紅紫技完整度 > 變身顏色。攻擊技能完整性必須要撐高。', trap: '87等金變案例顯示，等級與技能若不全，金變也救不了。' };
+                    case '槍手': return { verdict: 'S Tier', summary: '遠程之星。數據驗證：194傷害紫變(15分)完勝250傷害金變(30分)。', key: '遠攻優勢與紅紫技完整度。槍手在低面板下依然能靠技能打出高效率。', trap: '87等金變案例顯示，等級與技能若不全，金變也救不了。' };
+                    case '聖劍': return { verdict: 'S+ Tier', summary: '新任CP值王者。數據顯示：只需178面板傷害(金變)即可在13分鐘通關，面板門檻為全職業最低。', key: '物理傷害與SP(魔攻)雙向增益，屬性互補性極強。', trap: '極度依賴技能組合，若核心紅技不足，通關時間會倍增。' };
                     case '雷神': return { verdict: 'A Tier', summary: '下限極高。即使只有 196 傷害也能磨死地龍 (30分)。', key: '血盟獨特紫技「極限驅動」提供了穩定的被動輸出。', trap: '無明顯陷阱，耐心磨必過，極限驅動，潛能無限。' };
                     case '王族': return { verdict: 'Budget King', summary: '只需兩本紅技(勇猛意志+大師)即可穩定通關，養成成本最低。', key: '「勇猛意志」提供穩定攻速，無需任何紫技也能單挑。', trap: '需有耐心，打得慢不是打不過。' };
                     case '黑妖': return { verdict: 'Risk Tier', summary: '極速傳說 (8分鐘)，但生存壓力巨大。', key: '「夢魘」生存技與「破壞盔甲」爆發技缺一不可。', trap: '機體不夠硬且沒夢魘，進場即死亡。' };

@@ -356,6 +356,8 @@
         const Overview = ({ onViewClass }) => {
             const [activeJob, setActiveJob] = useState(null);
             const [showTrendLines, setShowTrendLines] = useState(true);
+            const [showDamage, setShowDamage] = useState(true);
+            const [showSP, setShowSP] = useState(true);
             const [hoverPos, setHoverPos] = useState(null);
             const scalesRef = useRef(null);
 
@@ -444,7 +446,17 @@
                                     }
                                 </div>
                             </div>
-                            <div className="flex gap-2">
+                            <div className="flex flex-wrap gap-2">
+                                {isDualAxisActive && (
+                                    <>
+                                        <button onClick={() => setShowDamage(!showDamage)} className={`flex items-center gap-1 px-3 py-1.5 ${showDamage ? 'bg-indigo-600 hover:bg-indigo-500 border-indigo-500' : 'bg-slate-700 hover:bg-slate-600 border-slate-600'} text-white rounded-lg text-sm transition-colors border`}>
+                                            <SwordIcon size={16} /> {showDamage ? '隱藏傷害' : '顯示傷害'}
+                                        </button>
+                                        <button onClick={() => setShowSP(!showSP)} className={`flex items-center gap-1 px-3 py-1.5 ${showSP ? 'bg-pink-600 hover:bg-pink-500 border-pink-500' : 'bg-slate-700 hover:bg-slate-600 border-slate-600'} text-white rounded-lg text-sm transition-colors border`}>
+                                            <ActivityIcon size={16} /> {showSP ? '隱藏SP' : '顯示SP'}
+                                        </button>
+                                    </>
+                                )}
                                 <button onClick={() => setShowTrendLines(!showTrendLines)} className={`flex items-center gap-1 px-3 py-1.5 ${showTrendLines ? 'bg-amber-600 hover:bg-amber-500' : 'bg-slate-700 hover:bg-slate-600'} text-white rounded-lg text-sm transition-colors border ${showTrendLines ? 'border-amber-500' : 'border-slate-600'}`}>
                                     <TrendingUpIcon size={16} /> {showTrendLines ? '隱藏趨勢線' : '顯示趨勢線'}
                                 </button>
@@ -603,7 +615,7 @@
                                     {isDualAxisActive && <Legend verticalAlign="top" height={36} />}
 
                                     {/* --- 1. 雙軸模式特殊渲染 (雙Y軸) --- */}
-                                    {isDualAxisActive && (
+                                    {isDualAxisActive && showDamage && (
                                         <Scatter
                                             name="面板傷害"
                                             data={FULL_DATA.filter(d => d.class === activeJob && d.time > 0)}
@@ -613,7 +625,7 @@
                                             shape="circle"
                                         />
                                     )}
-                                    {isDualAxisActive && (
+                                    {isDualAxisActive && showSP && (
                                         <Scatter
                                             name="SP (魔攻)"
                                             data={FULL_DATA.filter(d => d.class === activeJob && d.time > 0 && d.sp)}
@@ -623,7 +635,7 @@
                                             shape="diamond"
                                         />
                                     )}
-                                    {isDualAxisActive && showTrendLines && dualAxisTrendLines && dualAxisTrendLines.damageTrend && (
+                                    {isDualAxisActive && showDamage && showTrendLines && dualAxisTrendLines && dualAxisTrendLines.damageTrend && (
                                         <Scatter
                                             name="傷害趨勢"
                                             data={[
@@ -639,7 +651,7 @@
                                             shape={() => null}
                                         />
                                     )}
-                                    {isDualAxisActive && showTrendLines && dualAxisTrendLines && dualAxisTrendLines.spTrend && (
+                                    {isDualAxisActive && showSP && showTrendLines && dualAxisTrendLines && dualAxisTrendLines.spTrend && (
                                         <Scatter
                                             name="SP趨勢"
                                             data={[

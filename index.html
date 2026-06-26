@@ -4,6 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="icon" href="data:,">
     <title>天堂M 地龍單挑終極分析儀</title>
 
     <!-- 引入 Tailwind CSS -->
@@ -68,7 +69,7 @@
 <body>
     <div id="root"></div>
 
-    <script type="text/babel">
+    <script id="app-source" type="text/plain">
         const { useState, useMemo, useEffect, useRef } = React;
 
         // 從 window 物件安全解構 Recharts 組件
@@ -1032,6 +1033,24 @@
         };
 
         ReactDOM.render(<App />, document.getElementById('root'));
+    </script>
+    <script>
+        try {
+            const source = document.getElementById('app-source').textContent;
+            const compiled = Babel.transform(source, {
+                presets: ['env'],
+                plugins: [['transform-react-jsx', { runtime: 'classic' }]]
+            }).code;
+            const script = document.createElement('script');
+            script.textContent = compiled;
+            document.body.appendChild(script);
+        } catch (error) {
+            console.error('App compilation failed:', error);
+            const root = document.getElementById('root');
+            if (root) {
+                root.innerHTML = '<div style="color:#ef4444;padding:20px;text-align:center;"><h1>App Error</h1><p>頁面程式載入失敗，請查看瀏覽器 console。</p></div>';
+            }
+        }
     </script>
 </body>
 
